@@ -23,6 +23,15 @@ extension Publisher {
     }
 }
 
+extension Publishers {
+    
+    public static func create<T, E: Error>(
+        do expression: @Sendable @escaping () async throws -> T?
+    ) -> AsyncFlatMapPublisher<Void, E, T> {
+        return AsyncFlatMapPublisher((), expression)
+    }
+}
+
 
 public struct AsyncFlatMapPublisher<Input, Failure: Error, Output>: Publisher {
     
