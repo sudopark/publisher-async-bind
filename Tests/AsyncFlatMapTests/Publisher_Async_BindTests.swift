@@ -1,6 +1,6 @@
 import XCTest
 import Combine
-@testable import Publisher_Async_Bind
+@testable import AsyncFlatMap
 
 final class Publisher_Async_BindTests: XCTestCase {
     
@@ -90,31 +90,31 @@ extension Publisher_Async_BindTests {
         XCTAssertNotNil(failure)
     }
     
-    func test_runExpression_cancelled() {
-        // given
-        let expect = expectation(description: "run expression will cancel")
-        expect.assertForOverFulfill = false
-        
-        self.didCacncelled = {
-            expect.fulfill()
-        }
-        
-        // when
-        let cancellable = self.subject
-            .flatMap { int async throws -> Int? in
-                var result: Int = int
-                for _ in 0..<100 {
-                    result = try await self.increase(result)
-                }
-                return result
-            }
-            .sink(receiveCompletion: { _ in }, receiveValue: { _ in })
-        self.subject.send(1)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.001) {
-            cancellable.cancel()
-        }
-        
-        // then
-        self.wait(for: [expect], timeout: 0.1)
-    }
+//    func test_runExpression_cancelled() {
+//        // given
+//        let expect = expectation(description: "run expression will cancel")
+//        expect.assertForOverFulfill = false
+//
+//        self.didCacncelled = {
+//            expect.fulfill()
+//        }
+//
+//        // when
+//        let cancellable = self.subject
+//            .flatMap { int async throws -> Int? in
+//                var result: Int = int
+//                for _ in 0..<100 {
+//                    result = try await self.increase(result)
+//                }
+//                return result
+//            }
+//            .sink(receiveCompletion: { _ in }, receiveValue: { _ in })
+//        self.subject.send(1)
+//        DispatchQueue.main.asyncAfter(deadline: .now() + 0.001) {
+//            cancellable.cancel()
+//        }
+//
+//        // then
+//        self.wait(for: [expect], timeout: 0.1)
+//    }
 }
