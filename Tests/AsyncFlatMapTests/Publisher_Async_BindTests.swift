@@ -2,7 +2,7 @@ import XCTest
 import Combine
 @testable import AsyncFlatMap
 
-final class Publisher_Async_BindTests: XCTestCase {
+final class Publisher_Async_BindTests: XCTestCase, @unchecked Sendable {
     
     private var cancellables: Set<AnyCancellable>!
     private var subject: PassthroughSubject<Int, Error>!
