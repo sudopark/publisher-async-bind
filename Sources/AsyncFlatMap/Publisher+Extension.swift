@@ -56,11 +56,12 @@ public struct AsyncFlatMapPublisher<Input, Failure: Error, Output>: Publisher {
 private final class AsyncFlatMapSubscription<Input, S: Subscriber>: Subscription, @unchecked Sendable {
     
     private let input: Input
-    private var subscriber: S!
+    private let subscriber: S
     private let expression: @Sendable (Input) async throws -> S.Input?
     
-    private let lock = NSRecursiveLock()
     private var task: Task<Void, Never>?
+    private let lock = NSRecursiveLock()
+    private var isTerminated = false
     
     init(
         input: Input,
@@ -74,13 +75,18 @@ private final class AsyncFlatMapSubscription<Input, S: Subscriber>: Subscription
     
     func request(_ demand: Subscribers.Demand) {
         self.lock.lock(); defer { self.lock.unlock() }
-        self.runExpression()
+        guard task == nil, !isTerminated, demand > .none else { return }
+        runExpression()
     }
     
     func cancel() {
-        self.lock.lock(); defer { self.lock.unlock() }
-        self.task?.cancel()
-        self.subscriber = nil
+        self.lock.lock()
+        let task = self.task
+        self.task = nil
+        self.isTerminated = true
+        self.lock.unlock()
+        
+        task?.cancel()
     }
     
     private func runExpression() {
@@ -88,16 +94,37 @@ private final class AsyncFlatMapSubscription<Input, S: Subscriber>: Subscription
         let input = self.input
         self.task = Task { [weak self] in
             do {
-                if let result = try await self?.expression(input) {
-                    _ = self?.subscriber?.receive(result)
-                }
-                self?.subscriber?.receive(completion: .finished)
+                let result = try await self?.expression(input)
+                self?.deliver(result)
                 
-            } catch let error as S.Failure {
-                self?.subscriber?.receive(completion: .failure(error))
             } catch {
-                self?.subscriber?.receive(completion: .finished)
+                self?.deliverError(error)
             }
+        }
+    }
+    
+    private func deliver(_ result: S.Input?) {
+        self.lock.lock()
+        guard !self.isTerminated
+        else { self.lock.unlock(); return }
+        self.lock.unlock()
+        
+        if let result {
+            _ = subscriber.receive(result)
+        }
+        subscriber.receive(completion: .finished)
+    }
+    
+    private func deliverError(_ error: any Error) {
+        self.lock.lock()
+        guard !isTerminated, !(error is CancellationError)
+        else { self.lock.unlock(); return }
+        self.lock.unlock()
+        
+        if let typedError = error as? S.Failure {
+            subscriber.receive(completion: .failure(typedError))
+        } else {
+            subscriber.receive(completion: .finished)
         }
     }
 }
