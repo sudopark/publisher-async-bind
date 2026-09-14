@@ -11,6 +11,19 @@ import Combine
 
 extension Publisher {
     
+    /// Runs an async expression for each upstream value and emits its result.
+    ///
+    /// Cancelling the subscription cancels the running task.
+    ///
+    /// - Parameters:
+    ///   - maxPublishers: How many expressions may run at once. The default,
+    ///     `.unlimited`, starts a value's expression even while earlier ones are still
+    ///     running; `.max(1)` runs them one at a time.
+    ///   - expression: The async work to run. Returning `nil` finishes that element
+    ///     without emitting a value; a non-optional return is promoted, so the optional
+    ///     is a permission rather than a requirement. An error is emitted as a failure
+    ///     when it can be cast to the stream's `Failure`, and finishes the element
+    ///     without failing when it cannot.
     public func flatMap<T>(
         maxPublishers: Subscribers.Demand = .unlimited,
         do expression: @Sendable @escaping (Output) async throws -> T?
@@ -25,6 +38,10 @@ extension Publisher {
 
 extension Publishers {
     
+    /// Wraps a single async expression, with no upstream, into a publisher.
+    ///
+    /// The failure type cannot be inferred from the expression, so annotate the result
+    /// (for example, `let p: some Publisher<Int, any Error> = Publishers.create { ... }`).
     public static func create<T, E: Error>(
         do expression: @Sendable @escaping () async throws -> T?
     ) -> AsyncFlatMapPublisher<Void, E, T> {
@@ -53,6 +70,8 @@ public struct AsyncFlatMapPublisher<Input, Failure: Error, Output>: Publisher {
     
 }
 
+// `@unchecked` because `Subscriber` is not Sendable: the lock covers the mutable
+// state, and the subscriber is only ever touched from the single expression task.
 private final class AsyncFlatMapSubscription<Input, S: Subscriber>: Subscription, @unchecked Sendable {
     
     private let input: Input
@@ -75,6 +94,8 @@ private final class AsyncFlatMapSubscription<Input, S: Subscriber>: Subscription
     
     func request(_ demand: Subscribers.Demand) {
         self.lock.lock(); defer { self.lock.unlock() }
+        // Demand is additive, so a subscriber may call this more than once. This
+        // subscription is one-shot: an extra request must not start a second task.
         guard task == nil, !isTerminated, demand > .none else { return }
         runExpression()
     }
@@ -86,6 +107,8 @@ private final class AsyncFlatMapSubscription<Input, S: Subscriber>: Subscription
         self.isTerminated = true
         self.lock.unlock()
         
+        // Outside the lock: cancellation handlers in the expression run synchronously
+        // here and may re-enter this subscription.
         task?.cancel()
     }
     
@@ -117,6 +140,8 @@ private final class AsyncFlatMapSubscription<Input, S: Subscriber>: Subscription
     
     private func deliverError(_ error: any Error) {
         self.lock.lock()
+        // A CancellationError means the subscription was torn down, not that the work
+        // failed, so it is never surfaced downstream.
         guard !isTerminated, !(error is CancellationError)
         else { self.lock.unlock(); return }
         self.lock.unlock()
@@ -124,6 +149,7 @@ private final class AsyncFlatMapSubscription<Input, S: Subscriber>: Subscription
         if let typedError = error as? S.Failure {
             subscriber.receive(completion: .failure(typedError))
         } else {
+            // The stream's Failure cannot represent this error, so finish instead.
             subscriber.receive(completion: .finished)
         }
     }
